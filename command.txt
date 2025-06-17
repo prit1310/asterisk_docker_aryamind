@@ -2,3 +2,8 @@ Manual Call :-
 
 1 .  docker exec -it asterisk-docker-project-ari-app-1 sh
 2 .  curl -X POST http://localhost:3002/api/dial -H "Content-Type: application/json" -d '{"to":"msuser"}'
+
+in conatiner show recording :-
+
+1 . docker exec -it asterisk-docker-project-asterisk-1 sh
+2 . find /var/spool/asterisk -name '*.wav'

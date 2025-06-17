@@ -9,7 +9,7 @@ const app = express();
 app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json());
 
-app.use("/recordings", express.static("/var/spool/asterisk/monitor"));
+app.use("/recordings", express.static("/var/spool/asterisk/recording"));
 app.use("/api/calls", callRoutes);
 
 app.listen(3002, () => console.log("✅ Dashboard API running on port 3002"));
@@ -19,7 +19,7 @@ let ariClient;
 (async () => {
   await connectWithRetry();
   ariClient = await connectARI();
-  if (ariClient) waitForEndpointAndCall(ariClient, "msuser"); // start polling
+  if (ariClient) waitForEndpointAndCall(ariClient, "msuser"); // Auto-dial on boot
 })();
 
 async function connectARI(retries = 10) {
@@ -35,6 +35,7 @@ async function connectARI(retries = 10) {
 
         console.log(`📞 Call started: ${caller} → ${callee}`);
 
+        // Create DB entry
         const call = await CallLog.create({
           caller,
           callee,
@@ -43,10 +44,27 @@ async function connectARI(retries = 10) {
           updatedAt: startTime,
         });
 
+        await channel.answer();
+
+        // 🎙️ Record if ARI-originated call (no MixMonitor)
+        const recordingFile = `${channel.id}.wav`;
+        channel.record(
+          {
+            name: recordingFile.replace(".wav", ""),
+            format: "wav",
+            maxDurationSeconds: 3600,
+            beep: false,
+            ifExists: "overwrite",
+          },
+          (err) => {
+            if (err) console.error("❌ Recording error:", err.message);
+            else console.log(`🔴 Recording started: ${recordingFile}`);
+          }
+        );
+
         channel.on("StasisEnd", async () => {
           const endTime = new Date();
           const duration = moment(endTime).diff(startTime, "seconds");
-          const recordingFile = `${channel.id}.wav`;
 
           await call.update({
             endTime,
@@ -57,25 +75,6 @@ async function connectARI(retries = 10) {
 
           console.log(`📴 Call ended: ${caller} → ${callee} (${duration}s)`);
         });
-
-        await channel.answer();
-
-        const recordingFile = `${channel.id}.wav`;
-        channel.record(
-          {
-            name: channel.id,
-            format: "wav",
-            beep: false,
-            terminateOn: "#",
-          },
-          (err) => {
-            if (err) console.error("❌ Recording error:", err.message);
-            else {
-              console.log(`🔴 Recording started: ${channel.id}.wav`);
-              console.log(`📁 File expected at: ${recordingFile}`);
-            }
-          }
-        );
       });
 
       client.start("hello-world");
@@ -88,7 +87,7 @@ async function connectARI(retries = 10) {
   }
 }
 
-// 🔁 Persistent SIP polling + auto-dial once online
+// 🔁 Auto-dial to SIP user when online
 async function waitForEndpointAndCall(client, sipUser) {
   const endpointId = `SIP/${sipUser}`;
   let hasCalled = false;
@@ -126,7 +125,7 @@ async function waitForEndpointAndCall(client, sipUser) {
   poll();
 }
 
-// Manual trigger
+// 📞 Manual outbound call trigger
 app.post("/api/dial", async (req, res) => {
   const { to } = req.body;
   if (!to) return res.status(400).json({ error: "Missing 'to' number" });
