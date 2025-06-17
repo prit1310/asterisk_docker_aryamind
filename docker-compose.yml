@@ -37,24 +37,25 @@ services:
     image: grigiu/sipp
     depends_on:
       - asterisk
+      - ari-app
     volumes:
       - ./sipp:/sipp
     working_dir: /sipp
     entrypoint: /bin/sh
     command: >
-      -c "sleep 5 &&
+      -c "sleep 15 &&
       sipp asterisk
         -sf /sipp/auth-uac.xml
         -inf /sipp/users.csv
         -m 1
         -s 1001
-        -ap ms123
-        -au msuser
-        -p 5061
+        -ap 1001
+        -au 1001
+        -p 5062
         -t un
         -trace_err
         -trace_msg
         -trace_logs"
-    
+
 volumes:
   pgdata:

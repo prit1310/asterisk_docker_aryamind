@@ -1,15 +1,16 @@
-// hello-world.js
 const express = require("express");
+const cors = require("cors");
 const Ari = require("ari-client");
 const { CallLog, connectWithRetry } = require("./db");
 const callRoutes = require("./routes/calls");
 const moment = require("moment");
-const path = require("path");
 
 const app = express();
+app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json());
+
+app.use("/recordings", express.static("/var/spool/asterisk/monitor"));
 app.use("/api/calls", callRoutes);
-app.use("/recordings", express.static(path.join(__dirname, "..", "recordings")));
 
 app.listen(3002, () => console.log("✅ Dashboard API running on port 3002"));
 
@@ -18,6 +19,7 @@ let ariClient;
 (async () => {
   await connectWithRetry();
   ariClient = await connectARI();
+  if (ariClient) waitForEndpointAndCall(ariClient, "msuser"); // start polling
 })();
 
 async function connectARI(retries = 10) {
@@ -32,90 +34,96 @@ async function connectARI(retries = 10) {
         const startTime = new Date();
 
         console.log(`📞 Call started: ${caller} → ${callee}`);
+
         const call = await CallLog.create({
           caller,
           callee,
           startTime,
           createdAt: startTime,
-          updatedAt: startTime
+          updatedAt: startTime,
         });
 
         channel.on("StasisEnd", async () => {
           const endTime = new Date();
           const duration = moment(endTime).diff(startTime, "seconds");
+          const recordingFile = `${channel.id}.wav`;
+
           await call.update({
             endTime,
             duration,
-            recordingFile: `${channel.id}.wav`,
-            updatedAt: endTime
+            recordingFile,
+            updatedAt: endTime,
           });
+
           console.log(`📴 Call ended: ${caller} → ${callee} (${duration}s)`);
         });
 
         await channel.answer();
 
+        const recordingFile = `${channel.id}.wav`;
         channel.record(
           {
-            name: `monitor/${channel.id}`,
+            name: channel.id,
             format: "wav",
             beep: false,
-            terminateOn: "#"
+            terminateOn: "#",
           },
-          err => {
+          (err) => {
             if (err) console.error("❌ Recording error:", err.message);
-            else console.log(`🔴 Recording started: ${channel.id}.wav`);
+            else {
+              console.log(`🔴 Recording started: ${channel.id}.wav`);
+              console.log(`📁 File expected at: ${recordingFile}`);
+            }
           }
         );
       });
 
       client.start("hello-world");
-
-      // Wait for SIPp REGISTER to complete
-      console.log("⏳ Waiting 10s for SIP/msuser to register...");
-      await new Promise(res => setTimeout(res, 10000));
-
-      // Check if SIP/msuser is online
-      const endpointId = "SIP/msuser";
-      for (let attempt = 1; attempt <= 10; attempt++) {
-        try {
-          const endpoint = await client.endpoints.get({ tech: "SIP", resource: "msuser" });
-          if (endpoint.state === "online") {
-            console.log("✅ SIP/msuser is online. Proceeding to call.");
-            client.channels.originate(
-              {
-                endpoint: endpointId,
-                app: "hello-world",
-                appArgs: "1001",
-                callerId: "1000"
-              },
-              err => {
-                if (err) {
-                  console.error("❌ Auto-dial failed:", err.message);
-                } else {
-                  console.log("📤 Auto-dial triggered: SIP/msuser → Stasis");
-                }
-              }
-            );
-            break;
-          } else {
-            console.warn(`⚠️ SIP/msuser is ${endpoint.state}, retrying... (${attempt}/10)`);
-          }
-        } catch (err) {
-          console.warn(`⚠️ Could not query SIP/msuser: ${err.message}`);
-        }
-        await new Promise(res => setTimeout(res, 2000));
-        if (attempt === 10) {
-          console.warn("⏭️ SIP/msuser still unavailable, skipping auto-dial.");
-        }
-      }
-
       return client;
     } catch (err) {
-      console.error(`❌ ARI connect/dial failed (attempt ${i}):`, err.message);
+      console.error(`❌ ARI connect failed (attempt ${i}):`, err.message);
       if (i === retries) return null;
-      await new Promise(res => setTimeout(res, 3000));
+      await new Promise((res) => setTimeout(res, 3000));
     }
   }
+}
+
+// 🔁 Persistent SIP polling + auto-dial once online
+async function waitForEndpointAndCall(client, sipUser) {
+  const endpointId = `SIP/${sipUser}`;
+  let hasCalled = false;
+
+  const poll = async () => {
+    try {
+      const endpoint = await client.endpoints.get({ tech: "SIP", resource: sipUser });
+      if (endpoint.state === "online" && !hasCalled) {
+        console.log(`✅ ${endpointId} is online. Proceeding to call.`);
+
+        client.channels.originate(
+          {
+            endpoint: endpointId,
+            app: "hello-world",
+            appArgs: "1001",
+            callerId: "1000",
+          },
+          (err) => {
+            if (err) console.error("❌ Auto-dial failed:", err.message);
+            else console.log(`📤 Auto-dial triggered: ${endpointId} → Stasis`);
+          }
+        );
+
+        hasCalled = true;
+      } else {
+        console.log(`⏳ Waiting for ${endpointId} to come online... (${endpoint.state})`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ Could not query ${endpointId}: ${err.message}`);
+    }
+
+    if (!hasCalled) setTimeout(poll, 5000);
+  };
+
+  poll();
 }
 
 // Manual trigger
@@ -129,8 +137,9 @@ app.post("/api/dial", async (req, res) => {
       endpoint: `SIP/${to}`,
       app: "hello-world",
       appArgs: to,
-      callerId: "1000"
+      callerId: "1000",
     });
+
     console.log(`📤 Manual outbound call to SIP/${to}`);
     res.json({ success: true, message: `Calling ${to}` });
   } catch (err) {

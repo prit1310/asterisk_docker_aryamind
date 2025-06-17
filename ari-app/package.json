@@ -4,14 +4,17 @@
   "description": "Asterisk ARI app with PostgreSQL logging and call recording",
   "main": "hello-world.js",
   "scripts": {
-    "start": "node hello-world.js"
+    "start": "node hello-world.js",
+    "dev": "nodemon hello-world.js"
   },
   "dependencies": {
     "ari-client": "^1.1.4",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
     "moment": "^2.29.4",
     "pg": "^8.11.3",
-    "sequelize": "^6.32.1"
+    "sequelize": "^6.32.1",
+    "nodemon": "^3.0.2"
   },
   "keywords": [
     "asterisk",
