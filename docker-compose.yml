@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: asterisk
+      POSTGRES_PASSWORD: asteriskpw
+      POSTGRES_DB: ari_logs
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  asterisk:
+    image: andrius/asterisk:latest
+    ports:
+      - "5060:5060/udp"
+      - "8088:8088"
+    volumes:
+      - ./config:/etc/asterisk
+      - ./recordings:/var/spool/asterisk/monitor
+    depends_on:
+      - postgres
+
+  ari-app:
+    build: ./ari-app
+    ports:
+      - "3002:3002"
+    depends_on:
+      - postgres
+      - asterisk
+    volumes:
+      - ./recordings:/var/spool/asterisk/monitor
+    environment:
+      - RECORDINGS_DIR=/var/spool/asterisk/monitor
+
+  sipp:
+    image: grigiu/sipp
+    depends_on:
+      - asterisk
+    volumes:
+      - ./sipp:/sipp
+    working_dir: /sipp
+    entrypoint: /bin/sh
+    command: >
+      -c "sleep 5 &&
+      sipp asterisk
+        -sf /sipp/auth-uac.xml
+        -inf /sipp/users.csv
+        -m 1
+        -s 1001
+        -ap ms123
+        -au msuser
+        -p 5061
+        -t un
+        -trace_err
+        -trace_msg
+        -trace_logs"
+    
+volumes:
+  pgdata:
