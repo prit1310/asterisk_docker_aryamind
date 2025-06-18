@@ -1,0 +1,20 @@
+version: "3.1"
+
+intents:
+  - greet
+  - goodbye
+  - ask_balance
+  - affirm
+  - deny
+
+responses:
+  utter_greet:
+    - text: "Hello! How can I assist you today?"
+  utter_goodbye:
+    - text: "Goodbye! Have a great day."
+  utter_ask_balance:
+    - text: "Your account balance is ₹1200."
+
+session_config:
+  session_expiration_time: 60
+  carry_over_slots_to_new_session: true

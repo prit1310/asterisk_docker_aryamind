@@ -16,22 +16,34 @@ services:
       - "5060:5060/udp"
       - "8088:8088"
     volumes:
-      - ./config:/etc/asterisk
-      - ./recordings:/var/spool/asterisk/monitor
+      - ./Asterisk/config:/etc/asterisk
+      - ./Asterisk/recordings:/var/spool/asterisk/monitor
+      - ./Asterisk/recordings:/var/spool/asterisk/recording
     depends_on:
       - postgres
 
   ari-app:
-    build: ./ari-app
+    build:
+      context: ./Asterisk/ari-app
     ports:
       - "3002:3002"
     depends_on:
       - postgres
       - asterisk
     volumes:
-      - ./recordings:/var/spool/asterisk/monitor
+      - ./Asterisk/recordings:/var/spool/asterisk/monitor
     environment:
       - RECORDINGS_DIR=/var/spool/asterisk/monitor
+
+  rasa:
+    build:
+      context: ./rasa
+      dockerfile: Dockerfile
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./rasa:/app
+    restart: always
 
   sipp:
     image: grigiu/sipp
@@ -39,23 +51,29 @@ services:
       - asterisk
       - ari-app
     volumes:
-      - ./sipp:/sipp
+      - ./Asterisk/sipp:/sipp
     working_dir: /sipp
-    entrypoint: /bin/sh
-    command: >
-      -c "sleep 15 &&
-      sipp asterisk
-        -sf /sipp/auth-uac.xml
-        -inf /sipp/users.csv
-        -m 1
-        -s 1001
-        -ap 1001
-        -au 1001
-        -p 5062
-        -t un
-        -trace_err
-        -trace_msg
-        -trace_logs"
+    entrypoint: ""
+    command:
+      - sh
+      - -c
+      - |
+        sleep 15 &&
+        while true; do
+          sipp asterisk \
+            -sf /sipp/auth-uac.xml \
+            -inf /sipp/users.csv \
+            -m 1 \
+            -s 1001 \
+            -ap 1001 \
+            -au 1001 \
+            -p 5062 \
+            -t un \
+            -trace_err \
+            -trace_msg \
+            -trace_logs
+          sleep 5
+        done
 
 volumes:
   pgdata:
