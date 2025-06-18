@@ -19,6 +19,7 @@ services:
       - ./Asterisk/config:/etc/asterisk
       - ./Asterisk/recordings:/var/spool/asterisk/monitor
       - ./Asterisk/recordings:/var/spool/asterisk/recording
+      - ./Asterisk/recordings:/var/lib/asterisk/sounds
     depends_on:
       - postgres
 
@@ -69,9 +70,6 @@ services:
             -au 1001 \
             -p 5062 \
             -t un \
-            -trace_err \
-            -trace_msg \
-            -trace_logs
           sleep 5
         done
 

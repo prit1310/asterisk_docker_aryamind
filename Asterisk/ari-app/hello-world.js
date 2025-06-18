@@ -4,12 +4,13 @@ const Ari = require("ari-client");
 const { CallLog, connectWithRetry } = require("./db");
 const callRoutes = require("./routes/calls");
 const moment = require("moment");
+const fs = require("fs");
 
 const app = express();
 app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json());
 
-app.use("/recordings", express.static("/var/spool/asterisk/recording"));
+app.use("/recordings", express.static("/var/spool/asterisk/monitor"));
 app.use("/api/calls", callRoutes);
 
 app.listen(3002, () => console.log("✅ Dashboard API running on port 3002"));
@@ -19,7 +20,7 @@ let ariClient;
 (async () => {
   await connectWithRetry();
   ariClient = await connectARI();
-  if (ariClient) waitForEndpointAndCall(ariClient, "msuser"); // Auto-dial on boot
+  if (ariClient) waitForEndpointAndCall(ariClient, "msuser");
 })();
 
 async function connectARI(retries = 10) {
@@ -35,7 +36,6 @@ async function connectARI(retries = 10) {
 
         console.log(`📞 Call started: ${caller} → ${callee}`);
 
-        // Create DB entry
         const call = await CallLog.create({
           caller,
           callee,
@@ -46,7 +46,20 @@ async function connectARI(retries = 10) {
 
         await channel.answer();
 
-        // 🎙️ Record if ARI-originated call (no MixMonitor)
+        const greetingFilename = "greeting_good_morning";
+        const filePath = `/var/spool/asterisk/monitor/${greetingFilename}.wav`;
+
+        // Check file exists
+        if (fs.existsSync(filePath)) {
+          console.log("✅ Greeting file found:", filePath);
+          await new Promise((res) => setTimeout(res, 1000)); // Ensure file is fully accessible
+          await channel.play({ media: `sound:${greetingFilename}` });
+          console.log(`🔊 Played: ${greetingFilename}.wav`);
+        } else {
+          console.warn("⚠️ Greeting file not found:", filePath);
+        }
+
+        // 🎙️ Start recording
         const recordingFile = `${channel.id}.wav`;
         channel.record(
           {
@@ -87,7 +100,6 @@ async function connectARI(retries = 10) {
   }
 }
 
-// 🔁 Auto-dial to SIP user when online
 async function waitForEndpointAndCall(client, sipUser) {
   const endpointId = `SIP/${sipUser}`;
   let hasCalled = false;
@@ -125,7 +137,6 @@ async function waitForEndpointAndCall(client, sipUser) {
   poll();
 }
 
-// 📞 Manual outbound call trigger
 app.post("/api/dial", async (req, res) => {
   const { to } = req.body;
   if (!to) return res.status(400).json({ error: "Missing 'to' number" });
