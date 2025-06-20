@@ -1,17 +1,10 @@
 version: "3.1"
-
 stories:
-- story: greet path
+- story: greeting and balance
   steps:
     - intent: greet
     - action: utter_greet
-
-- story: goodbye path
-  steps:
+    - intent: ask_balance
+    - action: utter_balance
     - intent: goodbye
     - action: utter_goodbye
-
-- story: balance path
-  steps:
-    - intent: ask_balance
-    - action: utter_ask_balance

@@ -9,11 +9,11 @@ intents:
 
 responses:
   utter_greet:
-    - text: "Hello! How can I assist you today?"
+    - text: "Hello! How can I assist you?"
   utter_goodbye:
-    - text: "Goodbye! Have a great day."
-  utter_ask_balance:
-    - text: "Your account balance is ₹1200."
+    - text: "Goodbye! Have a nice day."
+  utter_balance:
+    - text: "Your account balance is ₹1,200."
 
 session_config:
   session_expiration_time: 60

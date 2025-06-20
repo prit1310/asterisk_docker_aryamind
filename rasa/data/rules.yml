@@ -1,17 +1,16 @@
 version: "3.1"
-
 rules:
-- rule: Greet user
+- rule: respond to greeting
   steps:
     - intent: greet
     - action: utter_greet
 
-- rule: Say goodbye
+- rule: respond to goodbye
   steps:
     - intent: goodbye
     - action: utter_goodbye
 
-- rule: Check balance
+- rule: provide balance
   steps:
     - intent: ask_balance
-    - action: utter_ask_balance
+    - action: utter_balance

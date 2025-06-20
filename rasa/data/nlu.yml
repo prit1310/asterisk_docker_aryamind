@@ -1,10 +1,9 @@
 version: "3.1"
-
 nlu:
 - intent: greet
   examples: |
-    - hello
     - hi
+    - hello
     - hey there
     - good morning
 
@@ -12,22 +11,22 @@ nlu:
   examples: |
     - goodbye
     - bye
-    - see you later
+    - see you
 
 - intent: ask_balance
   examples: |
-    - what is my balance
+    - what is my balance?
     - tell me my account balance
     - how much money do I have
 
 - intent: affirm
   examples: |
     - yes
-    - that's right
-    - correct
+    - that's correct
+    - exactly
 
 - intent: deny
   examples: |
     - no
+    - that's wrong
     - not really
-    - I don't think so

@@ -1,15 +1,15 @@
 language: en
-
 pipeline:
-  - name: WhitespaceTokenizer
-  - name: RegexFeaturizer
-  - name: LexicalSyntacticFeaturizer
-  - name: CountVectorsFeaturizer
-  - name: DIETClassifier
-    epochs: 100
-  - name: EntitySynonymMapper
-  - name: ResponseSelector
-    epochs: 100
+- name: WhitespaceTokenizer
+- name: CountVectorsFeaturizer
+- name: DIETClassifier
+  epochs: 100
+- name: FallbackClassifier
+  threshold: 0.3
+  ambiguity_threshold: 0.1
+- name: ResponseSelector
+  epochs: 100
 
 policies:
-  - name: RulePolicy
+- name: RulePolicy
+assistant_id: 20250620-113338-glossy-capstan

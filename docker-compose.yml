@@ -33,18 +33,24 @@ services:
       - asterisk
     volumes:
       - ./Asterisk/recordings:/var/spool/asterisk/monitor
+      - ./Asterisk/recordings:/var/lib/asterisk/sounds
     environment:
-      - RECORDINGS_DIR=/var/spool/asterisk/monitor
+      - RECORDINGS_DIR=/var/lib/asterisk/sounds
 
   rasa:
-    build:
-      context: ./rasa
-      dockerfile: Dockerfile
+    image: rasa/rasa:3.6.10
+    entrypoint: >
+      sh -c "rasa train && rasa run --enable-api --cors '*' --debug"
     ports:
       - "5005:5005"
     volumes:
       - ./rasa:/app
-    restart: always
+      - ./rasa/models:/app/models
+    working_dir: /app
+    environment:
+      - SQLALCHEMY_WARN_20=1
+      - SQLALCHEMY_SILENCE_UBER_WARNING=1
+    restart: unless-stopped
 
   sipp:
     image: grigiu/sipp
@@ -69,7 +75,7 @@ services:
             -ap 1001 \
             -au 1001 \
             -p 5062 \
-            -t un \
+            -t un
           sleep 5
         done
 
