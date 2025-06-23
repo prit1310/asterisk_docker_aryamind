@@ -22,7 +22,7 @@ app.listen(3002, () => console.log("✅ Dashboard API running on port 3002"));
 
 let ariClient;
 
-async function waitForRasa(retries = 20, interval = 3000) {
+async function waitForRasa(retries = 50, interval = 3000) {
   for (let i = 0; i < retries; i++) {
     try {
       const res = await axios.get("http://rasa:5005/status");
@@ -54,7 +54,7 @@ async function synthesizeToFile(text, filepath) {
     const curlResult = spawnSync("curl", [
       "-s", "-X", "POST",
       "https://api.elevenlabs.io/v1/text-to-speech/8DzKSPdgEQPaK5vKG0Rs/stream",
-      "-H", "xi-api-key: sk_bf4938643112c008fe480ad4e6233ee07ad4c1447dd73eb2",
+      "-H", "xi-api-key: sk_b31fbb3d29c25ecd32171e739cd25c2b1131948cacc43ec2",
       "-H", "Content-Type: application/json",
       "--data-binary", `@${payloadPath}`,
       "-o", rawPath
@@ -109,7 +109,7 @@ async function synthesizeToFile(text, filepath) {
   if (ariClient) waitForEndpointAndCall(ariClient, "msuser");
 })();
 
-async function connectARI(retries = 10) {
+async function connectARI(retries = 30) {
   for (let i = 1; i <= retries; i++) {
     try {
       const client = await Ari.connect("http://asterisk:8088/ari", "asterisk", "asteriskpw");
@@ -145,8 +145,9 @@ async function connectARI(retries = 10) {
 
           const playback1 = client.Playback();
           playback1.on('PlaybackStarted', () => console.log(`🎵 Playback started: recording:${greetingFile}`));
-          playback1.on('PlaybackError', (err) => console.error(`❌ Playback error: ${err.message}`));
+          playback1.on('PlaybackError', (err) => { console.error(`❌ Playback error: ${err.message}`); reject(new Error(`PlaybackError: ${filename}`)); });
           await new Promise(resolve => setTimeout(resolve, 1000)); // Ensure file readiness
+          console.log(`▶️ Attempting to play: recording:${greetingFile}`);
           await channel.playWithId({ media: `recording:${greetingFile}`, playbackId: playback1.id });
           await new Promise(res => playback1.once('PlaybackFinished', res));
           console.log("✅ Greeting finished");
@@ -172,12 +173,46 @@ async function connectARI(retries = 10) {
           let idx = 0;
           const callSid = `call_${channel.id}`;
 
+          function timeoutPromise(ms) {
+            return new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms));
+          }
+
+          async function playAudioAndWait(channel, filename) {
+            return new Promise((resolve, reject) => {
+              const playback = client.Playback();
+              playback.on('PlaybackStarted', () => {
+                console.log(`🎵 Playback started: recording:${filename}`);
+              });
+              playback.on('PlaybackError', err => {
+                console.error(`❌ Playback error: ${err.message}`);
+                reject(new Error(`PlaybackError: ${filename}`));
+              });
+              playback.on('PlaybackFinished', () => {
+                console.log(`✅ Playback finished: recording:${filename}`);
+                resolve();
+              });
+              console.log(`▶️ Attempting to play: recording:${filename}`);
+              channel.playWithId({ media: `recording:${filename}`, playbackId: playback.id }, err => {
+                if (err) {
+                  console.error("❌ playWithId failed:", err.message);
+                  reject(new Error(`PlaybackError: ${filename}`));
+                }
+              });
+            });
+          }
+
+          if (!channel || channel._state === 'Destroyed') {
+            console.log("⚠️ Channel already destroyed, skipping prompt");
+            return;
+          }
+
           async function nextPrompt() {
             if (idx >= scripts.length) {
               console.log("✅ All scripts processed, hanging up");
               await channel.hangup();
               return;
             }
+
             const userInput = scripts[idx++];
             console.log(`🗣️ User: ${userInput}`);
 
@@ -199,21 +234,19 @@ async function connectARI(retries = 10) {
                 return;
               }
 
-              await new Promise(resolve => setTimeout(resolve, 1000)); // Ensure file readiness
-              const playback = client.Playback();
-              playback.on('PlaybackStarted', () => console.log(`🎵 Playback started: recording:${replyName}`));
-              playback.on('PlaybackError', (err) => console.error(`❌ Playback error: ${err.message}`));
-              console.log(`🔊 Playing media: recording:${replyName}`);
-              await channel.playWithId({ media: `recording:${replyName}`, playbackId: playback.id });
-              await new Promise(res => playback.once('PlaybackFinished', res));
-              console.log(`✅ Reply #${idx} playback done`);
+              await new Promise(r => setTimeout(r, 1000)); // Optional safety delay
+              await playAudioAndWait(channel, replyName);
 
-              setTimeout(nextPrompt, 2500); // Increased delay
+              // Proceed to next step after short delay
+              await new Promise(res => setTimeout(res, 250));
+              await nextPrompt();
             } catch (e) {
               console.error("❌ Rasa interaction failed:", e.message);
-              setTimeout(nextPrompt, 2500);
+              await new Promise(res => setTimeout(res, 1050));
+              await nextPrompt();
             }
           }
+
 
           await nextPrompt();
         } catch (err) {
