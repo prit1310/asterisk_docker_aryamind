@@ -34,6 +34,8 @@ services:
     volumes:
       - ./Asterisk/recordings:/var/spool/asterisk/monitor
       - ./Asterisk/recordings:/var/lib/asterisk/sounds
+    env_file:
+      - ./Asterisk/ari-app/.env
     environment:
       - RECORDINGS_DIR=/var/lib/asterisk/sounds
 

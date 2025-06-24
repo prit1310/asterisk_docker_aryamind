@@ -12,7 +12,7 @@ const CallLog = sequelize.define("CallLog", {
   endTime: DataTypes.DATE,
   duration: DataTypes.INTEGER,
   recordingFile: DataTypes.STRING,
-}, { timestamps: true });
+}, { timestamps: true ,freezeTableName: true,});
 
 async function connectWithRetry(retries = 5) {
   for (let i = 0; i < retries; i++) {

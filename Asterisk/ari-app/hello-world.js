@@ -1,3 +1,5 @@
+// hello-world.js
+
 const express = require("express");
 const cors = require("cors");
 const Ari = require("ari-client");
@@ -6,7 +8,9 @@ const fs = require("fs");
 const path = require("path");
 const moment = require("moment");
 const { execSync, spawnSync } = require("child_process");
+require("dotenv").config();
 
+const elevenApiKey = process.env.ELEVEN_API_KEY;
 const { CallLog, connectWithRetry } = require("./db");
 const callRoutes = require("./routes/calls");
 
@@ -30,7 +34,7 @@ async function waitForRasa(retries = 50, interval = 3000) {
         console.log("✅ Rasa server is ready");
         return;
       }
-    } catch (e) {
+    } catch {
       console.log(`⏳ Waiting for Rasa... (${i + 1}/${retries})`);
     }
     await new Promise(r => setTimeout(r, interval));
@@ -54,7 +58,7 @@ async function synthesizeToFile(text, filepath) {
     const curlResult = spawnSync("curl", [
       "-s", "-X", "POST",
       "https://api.elevenlabs.io/v1/text-to-speech/8DzKSPdgEQPaK5vKG0Rs/stream",
-      "-H", "xi-api-key: sk_b31fbb3d29c25ecd32171e739cd25c2b1131948cacc43ec2",
+      "-H", `xi-api-key: ${elevenApiKey}`,
       "-H", "Content-Type: application/json",
       "--data-binary", `@${payloadPath}`,
       "-o", rawPath
@@ -63,39 +67,24 @@ async function synthesizeToFile(text, filepath) {
     if (curlResult.status !== 0) throw new Error(curlResult.stderr || "Unknown curl error");
 
     const stat = fs.statSync(rawPath);
-    if (stat.size < 1000) {
-      const rawContent = fs.readFileSync(rawPath, "utf8");
-      throw new Error(`Invalid TTS audio: ${rawContent}`);
-    }
+    if (stat.size < 1000) throw new Error(`TTS returned very short file`);
 
-    // Convert to Asterisk-compatible WAV format
-    execSync(`ffmpeg -y -i "${rawPath}" -ar 8000 -ac 1 -f wav -acodec pcm_s16le -filter:a "volume=2.0" "${filepath}"`);
-
-    // Set permissions for Asterisk to read the file
+    execSync(`ffmpeg -y -i "${rawPath}" -ar 8000 -ac 1 -f wav -acodec pcm_s16le "${filepath}"`);
     fs.chmodSync(filepath, 0o644);
 
-    // Flush to disk
-    const fd = fs.openSync(filepath, 'r');
-    fs.fsyncSync(fd);
-    fs.closeSync(fd);
+    const durationResult = spawnSync("ffprobe", [
+      "-v", "error", "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filepath
+    ], { encoding: "utf8" });
 
-    // Verify file existence, size, and readability
-    if (!fs.existsSync(filepath)) {
-      throw new Error(`File does not exist: ${filepath}`);
-    }
-    if (fs.statSync(filepath).size < 1000) {
-      throw new Error(`File is too small: ${filepath}`);
-    }
-    try {
-      fs.accessSync(filepath, fs.constants.R_OK);
-    } catch (err) {
-      throw new Error(`File is not readable: ${filepath}`);
-    }
+    const duration = parseFloat(durationResult.stdout.trim());
+    if (isNaN(duration) || duration < 0.5) throw new Error(`WAV duration too short or unreadable`);
 
+    console.log(`✅ Synthesized and converted: ${filepath} (${duration.toFixed(2)}s)`);
     fs.unlinkSync(rawPath);
-    console.log(`✅ Synthesized and converted: ${filepath}`);
   } catch (err) {
-    console.error("❌ TTS synthesis failed:", err.message);
+    console.error("❌ synthesizeToFile error:", err.message);
     throw err;
   } finally {
     if (fs.existsSync(payloadPath)) fs.unlinkSync(payloadPath);
@@ -122,10 +111,25 @@ async function connectARI(retries = 30) {
         const recordingFile = path.join(RECORDINGS_DIR, `${channel.id}.wav`);
 
         console.log(`📞 Call started: ${caller} → ${callee}, Channel ID: ${channel.id}`);
-        const call = await CallLog.create({ caller, callee, startTime, createdAt: startTime, updatedAt: startTime });
+        const call = await CallLog.create({ caller, callee, startTime });
+
+        // ✅ Always register StasisEnd listener
+        channel.on("StasisEnd", async () => {
+          const endTime = new Date();
+          try {
+            await call.update({
+              endTime,
+              duration: moment(endTime).diff(startTime, "seconds"),
+              recordingFile,
+              updatedAt: endTime
+            });
+            console.log(`📴 Call ended: ${caller} → ${callee}`);
+          } catch (err) {
+            console.error("❌ Call log update failed:", err.message);
+          }
+        });
 
         try {
-          console.log(`🔍 Channel state: ${channel.state}`);
           await channel.answer();
           console.log("✅ Channel answered");
 
@@ -135,19 +139,15 @@ async function connectARI(retries = 30) {
             await synthesizeToFile("Good morning! Let's start your session.", greetingPath);
           }
 
-          // Test with built-in Asterisk sound to verify playback
           const testPlayback = client.Playback();
           testPlayback.on('PlaybackStarted', () => console.log(`🎵 Test playback started: sound:tt-weasels`));
-          testPlayback.on('PlaybackError', (err) => console.error(`❌ Test playback error: ${err.message}`));
           await channel.playWithId({ media: "sound:tt-weasels", playbackId: testPlayback.id });
           await new Promise(res => testPlayback.once('PlaybackFinished', res));
           console.log("✅ Test playback finished");
 
           const playback1 = client.Playback();
           playback1.on('PlaybackStarted', () => console.log(`🎵 Playback started: recording:${greetingFile}`));
-          playback1.on('PlaybackError', (err) => { console.error(`❌ Playback error: ${err.message}`); reject(new Error(`PlaybackError: ${filename}`)); });
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Ensure file readiness
-          console.log(`▶️ Attempting to play: recording:${greetingFile}`);
+          await new Promise(res => setTimeout(res, 1000));
           await channel.playWithId({ media: `recording:${greetingFile}`, playbackId: playback1.id });
           await new Promise(res => playback1.once('PlaybackFinished', res));
           console.log("✅ Greeting finished");
@@ -173,107 +173,82 @@ async function connectARI(retries = 30) {
           let idx = 0;
           const callSid = `call_${channel.id}`;
 
-          function timeoutPromise(ms) {
-            return new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms));
-          }
+          const playAudioAndWait = async (filename) => {
+            const filepath = path.join(RECORDINGS_DIR, `${filename}.wav`);
+            for (let attempt = 1; attempt <= 5; attempt++) {
+              try {
+                if (!fs.existsSync(filepath)) throw new Error("File not ready");
+                const stat = fs.statSync(filepath);
+                if (stat.size < 2000) throw new Error("File too small");
 
-          async function playAudioAndWait(channel, filename) {
-            return new Promise((resolve, reject) => {
-              const playback = client.Playback();
-              playback.on('PlaybackStarted', () => {
-                console.log(`🎵 Playback started: recording:${filename}`);
-              });
-              playback.on('PlaybackError', err => {
-                console.error(`❌ Playback error: ${err.message}`);
-                reject(new Error(`PlaybackError: ${filename}`));
-              });
-              playback.on('PlaybackFinished', () => {
-                console.log(`✅ Playback finished: recording:${filename}`);
-                resolve();
-              });
-              console.log(`▶️ Attempting to play: recording:${filename}`);
-              channel.playWithId({ media: `recording:${filename}`, playbackId: playback.id }, err => {
-                if (err) {
-                  console.error("❌ playWithId failed:", err.message);
-                  reject(new Error(`PlaybackError: ${filename}`));
-                }
-              });
-            });
-          }
+                const playback = client.Playback();
+                await channel.playWithId({ media: `sound:${filename}`, playbackId: playback.id });
 
-          if (!channel || channel._state === 'Destroyed') {
-            console.log("⚠️ Channel already destroyed, skipping prompt");
-            return;
-          }
+                return await new Promise((resolve, reject) => {
+                  const timeout = setTimeout(() => reject(new Error("PlaybackTimeout")), 10000);
+                  playback.once("PlaybackFinished", () => {
+                    clearTimeout(timeout);
+                    console.log(`✅ Playback finished: sound:${filename}`);
+                    resolve();
+                  });
+                  playback.once("PlaybackError", (err) => {
+                    clearTimeout(timeout);
+                    reject(new Error(err.message));
+                  });
+                });
+              } catch (err) {
+                console.warn(`⚠️ Playback attempt ${attempt} failed for ${filename}: ${err.message}`);
+                if (attempt === 5) throw err;
+                await new Promise(r => setTimeout(r, 1000));
+              }
+            }
+          };
 
-          async function nextPrompt() {
+          const nextPrompt = async () => {
             if (idx >= scripts.length) {
-              console.log("✅ All scripts processed, hanging up");
               await channel.hangup();
               return;
             }
 
             const userInput = scripts[idx++];
             console.log(`🗣️ User: ${userInput}`);
+            let reply = "Sorry, I didn't understand that.";
 
             try {
-              const { data } = await axios.post("http://rasa:5005/webhooks/rest/webhook", {
+              const res = await axios.post("http://rasa:5005/webhooks/rest/webhook", {
                 sender: callSid,
                 message: userInput
-              });
+              }, { timeout: 7000 });
 
-              const reply = data?.[0]?.text || "Sorry, I didn't understand that.";
-              console.log(`🤖 Bot: ${reply}`);
-
-              const replyName = `reply_${idx}`;
-              const replyPath = path.join(RECORDINGS_DIR, `${replyName}.wav`);
-              await synthesizeToFile(reply, replyPath);
-
-              if (!fs.existsSync(replyPath)) {
-                console.error(`❌ Reply file missing: ${replyPath}`);
-                return;
+              if (res.data?.[0]?.text) {
+                reply = res.data[0].text;
+                console.log(`🤖 Bot: ${reply}`);
+              } else {
+                console.warn("⚠️ Rasa returned no text");
               }
-
-              await new Promise(r => setTimeout(r, 1000)); // Optional safety delay
-              await playAudioAndWait(channel, replyName);
-
-              // Proceed to next step after short delay
-              await new Promise(res => setTimeout(res, 250));
-              await nextPrompt();
-            } catch (e) {
-              console.error("❌ Rasa interaction failed:", e.message);
-              await new Promise(res => setTimeout(res, 1050));
-              await nextPrompt();
+            } catch (err) {
+              console.error("❌ Rasa error:", err.message);
             }
-          }
 
+            const replyName = `reply_${idx}`;
+            const replyPath = path.join(RECORDINGS_DIR, `${replyName}.wav`);
+            await synthesizeToFile(reply, replyPath);
+
+            await playAudioAndWait(replyName);
+            await new Promise(r => setTimeout(r, 250));
+            await nextPrompt();
+          };
 
           await nextPrompt();
         } catch (err) {
           console.error("❌ Call handling error:", err.message);
         }
-
-        channel.on("StasisEnd", async () => {
-          const endTime = new Date();
-          try {
-            await call.update({
-              endTime,
-              duration: moment(endTime).diff(startTime, "seconds"),
-              recordingFile,
-              updatedAt: endTime
-            });
-            console.log(`📴 Call ended: ${caller} → ${callee}`);
-          } catch (err) {
-            console.error("❌ Call log update failed:", err.message);
-          }
-        });
       });
 
       client.start("hello-world");
       return client;
     } catch (err) {
       console.error(`❌ ARI connect failed (attempt ${i}):`, err.message);
-      if (i === retries) return null;
       await new Promise(r => setTimeout(r, 3000));
     }
   }
@@ -281,12 +256,13 @@ async function connectARI(retries = 30) {
 
 async function waitForEndpointAndCall(client, sipUser) {
   let called = false;
-  const poll = async () => {
+
+  setInterval(async () => {
     try {
       const endpoint = await client.endpoints.get({ tech: "SIP", resource: sipUser });
       if (endpoint.state === "online" && !called) {
         console.log(`✅ SIP/${sipUser} is online. Calling now.`);
-        client.channels.originate({
+        await client.channels.originate({
           endpoint: `SIP/${sipUser}`,
           app: "hello-world",
           appArgs: "1001",
@@ -297,9 +273,7 @@ async function waitForEndpointAndCall(client, sipUser) {
     } catch (e) {
       console.warn("⚠️ Endpoint check failed:", e.message);
     }
-    if (!called) setTimeout(poll, 5000);
-  };
-  poll();
+  }, 5000);
 }
 
 app.post("/api/dial", async (req, res) => {

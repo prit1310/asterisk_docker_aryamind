@@ -1,3 +1,9 @@
+# Ignore node_modules
 /node_modules
+
+# Ignore all recordings (audio + temp files)
 recordings/*.wav
 recordings/*.json
+
+# Ignore environment variables file
+.env

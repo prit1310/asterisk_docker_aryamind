@@ -17,7 +17,8 @@ RUN npm install
 COPY . .
 
 # Ensure recordings folder exists
-RUN mkdir -p /var/spool/asterisk/monitor
+RUN mkdir -p /var/lib/asterisk/sounds && \
+    chmod -R 777 /var/lib/asterisk/sounds
 
 # Expose API port
 EXPOSE 3002
